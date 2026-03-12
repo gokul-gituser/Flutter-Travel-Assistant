@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'dart:async';
-import 'package:geolocator/geolocator.dart';
+import 'package:flutter/services.dart';
 import 'services/backend_service.dart';
+import 'services/location_service.dart';
 
 void main() {
   runApp(const MyApp());
@@ -13,478 +13,491 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Location Tracker',
+      title: 'Travel Assistant',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch: Colors.blue,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFB85C38)),
         useMaterial3: true,
       ),
-      home: const LocationScreen(),
+      home: const ChatScreen(),
     );
   }
 }
 
-class LocationScreen extends StatefulWidget {
-  const LocationScreen({super.key});
+class ChatMessage {
+  final String text;
+  final bool isUser;
+
+  ChatMessage({required this.text, required this.isUser});
+}
+
+class ChatScreen extends StatefulWidget {
+  const ChatScreen({super.key});
 
   @override
-  State<LocationScreen> createState() => _LocationScreenState();
+  State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _LocationScreenState extends State<LocationScreen> {
-  String locationText = "Press Start to track location";
-  StreamSubscription<Position>? _positionStream;
-  
-  // Current position
-  double? currentLat;
-  double? currentLng;
-  
-  // Nearby places
-  List<NearbyPlace> nearbyPlaces = [];
-  bool isLoadingPlaces = false;
-  String selectedCategory = 'restaurant';
+class _ChatScreenState extends State<ChatScreen> {
+  final TextEditingController _controller = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  final List<ChatMessage> _messages = [];
+  bool _isLoading = false;
 
-  // Categories
-  final categories = [
-    'restaurant',
-    'cafe',
-    'bar',
-    'fast_food',
-    'park',
-    'cinema',
-    'theatre',
-    'hospital',
-    'pharmacy',
-    'atm',
-    'fuel',
-    'hotel',
-    'supermarket',
-  ];
+  double? _lat;
+  double? _lng;
 
-  Future<void> startTracking() async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        _showSnackBar('❌ Location services are disabled');
-        return;
-      }
+  // Colours
+  static const Color _bg = Color(0xFFFAF6F1);
+  static const Color _userBubble = Color(0xFFB85C38);
+  static const Color _botBubble = Color(0xFFFFFFFF);
+  static const Color _accent = Color(0xFFB85C38);
+  static const Color _textDark = Color(0xFF2C1A0E);
+  static const Color _textLight = Color(0xFF8C6A52);
 
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        _showSnackBar('❌ Permission permanently denied');
-        return;
-      }
-
-      _positionStream = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 10, // update every 10 meters
-        ),
-      ).listen((Position position) async {
-        final timestamp = DateTime.now();
-
-        setState(() {
-          currentLat = position.latitude;
-          currentLng = position.longitude;
-          locationText =
-              "📍 Current Location\n"
-              "Lat: ${position.latitude.toStringAsFixed(6)}\n"
-              "Lng: ${position.longitude.toStringAsFixed(6)}\n"
-              "Accuracy: ${position.accuracy.toStringAsFixed(1)}m\n"
-              "Updated: ${timestamp.hour}:${timestamp.minute}:${timestamp.second}";
-        });
-
-        // Send to backend (happens in background)
-        BackendService.updateLocation(
-          lat: position.latitude,
-          lng: position.longitude,
-        );
-      });
-
-      _showSnackBar('✅ Tracking started');
-    } catch (e) {
-      _showSnackBar('❌ Error: $e');
-    }
-  }
-
-  void stopTracking() {
-    _positionStream?.cancel();
-    setState(() {
-      locationText = "Tracking stopped.";
-    });
-    _showSnackBar('⏹️ Tracking stopped');
-  }
-
-  Future<void> fetchNearbyPlaces() async {
-    if (currentLat == null || currentLng == null) {
-      _showSnackBar('⚠️ Start tracking first to get your location');
-      return;
-    }
-
-    setState(() {
-      isLoadingPlaces = true;
-    });
-
-    try {
-      // Call backend API
-      final places = await BackendService.searchNearbyPlaces(
-        lat: currentLat!,
-        lng: currentLng!,
-        category: selectedCategory,
-        radiusMeters: 1000,
-      );
-
-      setState(() {
-        nearbyPlaces = places;
-        isLoadingPlaces = false;
-      });
-
-      if (places.isEmpty) {
-        _showSnackBar('😕 No $selectedCategory found nearby');
-      } else {
-        _showSnackBar('✅ Found ${places.length} places');
-      }
-    } catch (e) {
-      setState(() {
-        isLoadingPlaces = false;
-      });
-      _showSnackBar('❌ Error: $e');
-    }
-  }
-
-  void _showSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+  @override
+  void initState() {
+    super.initState();
+    _messages.add(ChatMessage(
+      text: "Hello! I'm your travel assistant ✈️\nAsk me about places to visit, food, itineraries, safety tips — anything travel related.",
+      isUser: false,
+    ));
   }
 
   @override
   void dispose() {
-    _positionStream?.cancel();
+    _controller.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+  
+  Future<void> _send() async {
+  final text = _controller.text.trim();
+  if (text.isEmpty || _isLoading) return;
+
+  _controller.clear();
+  HapticFeedback.lightImpact();
+
+  setState(() {
+    _messages.add(ChatMessage(text: text, isUser: true));
+    _isLoading = true;
+  });
+  _scrollToBottom();
+
+  try {
+    String reply = await BackendService.sendMessage(
+      text,
+      lat: _lat,
+      lng: _lng,
+    );
+
+    // If LLM asks for location
+    if (_needsLocation(reply) && _lat == null) {
+
+      // Show LLM message in chat
+      setState(() {
+        _messages.add(ChatMessage(text: reply, isUser: false));
+      });
+
+      final granted = await _showLocationDialog();
+
+      // Show user decision in chat
+      setState(() {
+        _messages.add(ChatMessage(
+          text: granted
+              ? "User allowed location access"
+              : "User denied location permission",
+          isUser: true,
+        ));
+      });
+
+      if (granted) {
+        final position = await LocationService.getLocation();
+
+        if (position != null) {
+          _lat = position.latitude;
+          _lng = position.longitude;
+
+          // resend original message WITH location
+          reply = await BackendService.sendMessage(
+            text,
+            lat: _lat,
+            lng: _lng,
+          );
+
+          setState(() {
+            _messages.add(ChatMessage(text: reply, isUser: false));
+          });
+        }
+      }
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      _scrollToBottom();
+      return;
+    }
+
+    // normal reply
+    setState(() {
+      _messages.add(ChatMessage(text: reply, isUser: false));
+      _isLoading = false;
+    });
+
+  } catch (e) {
+    setState(() {
+      _messages.add(ChatMessage(
+        text: "Sorry, something went wrong. Please try again.",
+        isUser: false,
+      ));
+      _isLoading = false;
+    });
+  }
+
+  _scrollToBottom();
+}
+
+bool _needsLocation(String reply) {
+  final lower = reply.toLowerCase();
+  return lower.contains('location') ||
+         lower.contains('where you are') ||
+         lower.contains('near you') ||
+         lower.contains('your area');
+}
+
+Future<bool> _showLocationDialog() async {
+  final result = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text('📍 Location needed'),
+      content: const Text(
+        'To find places near you, the assistant needs your location. Allow access?'
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('No thanks'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFB85C38),
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Allow'),
+        ),
+      ],
+    ),
+  );
+  return result ?? false;
+}
+
+  void _scrollToBottom() {
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _bg,
       appBar: AppBar(
-        title: const Text("Location Tracker"),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          // Show if tracking is active
-          if (_positionStream != null)
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Icon(Icons.circle, color: Colors.red, size: 12),
+        backgroundColor: _bg,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        title: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: _accent,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Center(
+                child: Text('✈️', style: TextStyle(fontSize: 18)),
+              ),
             ),
-        ],
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Travel Assistant',
+                  style: TextStyle(
+                    color: _textDark,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  _isLoading ? 'typing...' : 'online',
+                  style: TextStyle(
+                    color: _isLoading ? _accent : _textLight,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Divider(color: _textLight.withOpacity(0.15), height: 1),
+        ),
       ),
       body: Column(
         children: [
-          // Location display card
-          Card(
-            margin: const EdgeInsets.all(16),
-            elevation: 4,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  Text(
-                    locationText,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: _positionStream == null ? startTracking : null,
-                        icon: const Icon(Icons.play_arrow),
-                        label: const Text("Start"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor: Colors.grey,
-                        ),
-                      ),
-                      ElevatedButton.icon(
-                        onPressed: _positionStream != null ? stopTracking : null,
-                        icon: const Icon(Icons.stop),
-                        label: const Text("Stop"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor: Colors.grey,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Search controls
-          Card(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Search Nearby Places',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          value: selectedCategory,
-                          decoration: const InputDecoration(
-                            labelText: 'Category',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          items: categories.map((category) {
-                            return DropdownMenuItem(
-                              value: category,
-                              child: Text(
-                                category.replaceAll('_', ' ').toUpperCase(),
-                                style: const TextStyle(fontSize: 14),
-                              ),
-                            );
-                          }).toList(),
-                          onChanged: (value) {
-                            setState(() {
-                              selectedCategory = value!;
-                            });
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        onPressed: isLoadingPlaces ? null : fetchNearbyPlaces,
-                        icon: isLoadingPlaces
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.search),
-                        label: const Text('Search'),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 8),
-
-          // Results header
-          if (nearbyPlaces.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Found ${nearbyPlaces.length} places',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey,
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        nearbyPlaces.clear();
-                      });
-                    },
-                    icon: const Icon(Icons.clear, size: 16),
-                    label: const Text('Clear'),
-                  ),
-                ],
-              ),
-            ),
-
-          const Divider(),
-
-          // Nearby places list
           Expanded(
-            child: nearbyPlaces.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          isLoadingPlaces ? Icons.hourglass_empty : Icons.explore,
-                          size: 64,
-                          color: Colors.grey[300],
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          isLoadingPlaces
-                              ? 'Searching nearby places...'
-                              : 'No places to show.\nStart tracking and search!',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    itemCount: nearbyPlaces.length,
-                    itemBuilder: (context, index) {
-                      final place = nearbyPlaces[index];
-                      final distanceKm = place.distance / 1000;
-                      
-                      return Card(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 4,
-                        ),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: Colors.blue,
-                            foregroundColor: Colors.white,
-                            child: Icon(_getCategoryIcon(place.type)),
-                          ),
-                          title: Text(
-                            place.name,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          subtitle: Text(
-                            '${place.type.toUpperCase()} • ${distanceKm < 1 ? "${place.distance.toStringAsFixed(0)}m" : "${distanceKm.toStringAsFixed(2)}km"} away',
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 12,
-                            ),
-                          ),
-                          trailing: Text(
-                            '#${index + 1}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          onTap: () => _showPlaceDetails(place),
-                        ),
-                      );
-                    },
-                  ),
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              itemCount: _messages.length + (_isLoading ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (index == _messages.length) return _buildTyping();
+                return _buildBubble(_messages[index]);
+              },
+            ),
           ),
+          _buildInputBar(),
         ],
       ),
     );
   }
 
-  void _showPlaceDetails(NearbyPlace place) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(place.name),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildDetailRow('Type', place.type),
-            _buildDetailRow('Distance', '${(place.distance).toStringAsFixed(0)}m'),
-            _buildDetailRow('Latitude', place.lat.toStringAsFixed(6)),
-            _buildDetailRow('Longitude', place.lng.toStringAsFixed(6)),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
+  Widget _buildBubble(ChatMessage msg) {
+    final isUser = msg.isUser;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: EdgeInsets.only(
+        top: 4,
+        bottom: 4,
+        left: isUser ? 64 : 0,
+        right: isUser ? 0 : 64,
+      ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment:
+            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              '$label:',
-              style: const TextStyle(fontWeight: FontWeight.bold),
+          if (!isUser)
+            Container(
+              width: 28,
+              height: 28,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: _accent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Center(
+                child: Text('✈️', style: TextStyle(fontSize: 13)),
+              ),
             ),
-          ),
-          Expanded(
-            child: Text(value),
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: isUser ? _userBubble : _botBubble,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: Radius.circular(isUser ? 16 : 4),
+                  bottomRight: Radius.circular(isUser ? 4 : 16),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.06),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Text(
+                msg.text,
+                style: TextStyle(
+                  color: isUser ? Colors.white : _textDark,
+                  fontSize: 14.5,
+                  height: 1.5,
+                ),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  IconData _getCategoryIcon(String type) {
-    switch (type.toLowerCase()) {
-      case 'restaurant':
-        return Icons.restaurant;
-      case 'cafe':
-        return Icons.local_cafe;
-      case 'bar':
-        return Icons.local_bar;
-      case 'fast_food':
-        return Icons.fastfood;
-      case 'park':
-        return Icons.park;
-      case 'cinema':
-      case 'theatre':
-        return Icons.theaters;
-      case 'hospital':
-        return Icons.local_hospital;
-      case 'pharmacy':
-        return Icons.local_pharmacy;
-      case 'atm':
-        return Icons.atm;
-      case 'fuel':
-        return Icons.local_gas_station;
-      case 'hotel':
-        return Icons.hotel;
-      case 'supermarket':
-        return Icons.shopping_cart;
-      default:
-        return Icons.place;
-    }
+  Widget _buildTyping() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4, right: 64),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            margin: const EdgeInsets.only(right: 8),
+            decoration: BoxDecoration(
+              color: _accent,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Center(
+              child: Text('✈️', style: TextStyle(fontSize: 13)),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: _botBubble,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+                bottomRight: Radius.circular(16),
+                bottomLeft: Radius.circular(4),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: List.generate(3, (i) {
+                return _Dot(delay: Duration(milliseconds: i * 200));
+              }),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInputBar() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      decoration: BoxDecoration(
+        color: _bg,
+        border: Border(
+          top: BorderSide(color: _textLight.withOpacity(0.15)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.06),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: TextField(
+                controller: _controller,
+                minLines: 1,
+                maxLines: 4,
+                textCapitalization: TextCapitalization.sentences,
+                style: const TextStyle(color: _textDark, fontSize: 14.5),
+                decoration: InputDecoration(
+                  hintText: 'Ask me anything...',
+                  hintStyle: TextStyle(color: _textLight.withOpacity(0.7)),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                ),
+                onSubmitted: (_) => _send(),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: _send,
+            child: Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: _isLoading ? _textLight : _accent,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: _accent.withOpacity(0.35),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// Animated typing dot
+class _Dot extends StatefulWidget {
+  final Duration delay;
+  const _Dot({required this.delay});
+
+  @override
+  State<_Dot> createState() => _DotState();
+}
+
+class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    Future.delayed(widget.delay, () {
+      if (mounted) _ctrl.repeat(reverse: true);
+    });
+    _anim = Tween(begin: 0.3, end: 1.0).animate(_ctrl);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _anim,
+      child: Container(
+        width: 7,
+        height: 7,
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          color: Color(0xFFB85C38),
+        ),
+      ),
+    );
   }
 }
