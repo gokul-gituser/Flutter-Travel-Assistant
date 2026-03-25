@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">Travel Assistant</string>
+    <string name="facebook_app_id">1640639253950499</string>
+    <string name="fb_login_protocol_scheme">fb1640639253950499</string>
+    <string name="facebook_client_token">c5b3f722b5a6588a99a352aedd42eefb</string>
+</resources>

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'services/backend_service.dart';
 import 'services/location_service.dart';
+import 'dart:async';
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 
 void main() {
   runApp(const MyApp());
@@ -19,7 +22,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFB85C38)),
         useMaterial3: true,
       ),
-      home: const ChatScreen(),
+      home: const LoginScreen(),
     );
   }
 }
@@ -29,6 +32,36 @@ class ChatMessage {
   final bool isUser;
 
   ChatMessage({required this.text, required this.isUser});
+}
+
+class LoginScreen extends StatelessWidget {
+  const LoginScreen({super.key});
+
+  Future<void> _login(BuildContext context) async {
+    final result = await FacebookAuth.instance.login();
+
+    if (result.status == LoginStatus.success) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const ChatScreen()),
+      );
+    } else {
+      print(result.status);
+      print(result.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: ElevatedButton(
+          onPressed: () => _login(context),
+          child: const Text("Login with Facebook"),
+        ),
+      ),
+    );
+  }
 }
 
 class ChatScreen extends StatefulWidget {
@@ -41,8 +74,12 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+
+  StreamSubscription<Position>? _positionStream;
+
   final List<ChatMessage> _messages = [];
   bool _isLoading = false;
+  
 
   double? _lat;
   double? _lng;
@@ -55,17 +92,84 @@ class _ChatScreenState extends State<ChatScreen> {
   static const Color _textDark = Color(0xFF2C1A0E);
   static const Color _textLight = Color(0xFF8C6A52);
 
+
+void _startLocationStream() async {
+ // Check if we actually have permission before starting
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+      print("⚠️ Cannot start stream: No permissions");
+     return;
+   }
+
+ // Cancel any existing stream just in case
+    _positionStream?.cancel();
+
+    DateTime? _lastSent;
+
+    _positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 100, 
+      ),
+    ).listen((Position position) {
+
+      final now = DateTime.now();
+      if (_lastSent != null &&
+          now.difference(_lastSent!) < const Duration(seconds: 5)) {
+        return;
+      }
+      _lastSent = now;
+
+      if (mounted) {
+        setState(() { 
+          _lat = position.latitude;
+          _lng = position.longitude;
+        });
+      }
+
+      BackendService.updateLocation(
+        userId: BackendService.userId, 
+        lat: position.latitude,
+        lng: position.longitude,
+      );
+      
+      print("📍 LIVE LOCATION UPDATED: $_lat, $_lng");
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     _messages.add(ChatMessage(
       text: "Hello! I'm your travel assistant ✈️\nAsk me about places to visit, food, itineraries, safety tips — anything travel related.",
       isUser: false,
+
+      
     ));
+    _startLocationStream();
+/*
+    // ✅ START LOCATION STREAM HERE
+    _positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 50,
+      ),
+    ).listen((Position position) {
+      setState(() { 
+        _lat = position.latitude;
+        _lng = position.longitude;
+      });
+
+      print("📍 LIVE LOCATION: $_lat, $_lng");
+    });
+    */
   }
+  
 
   @override
   void dispose() {
+    _positionStream?.cancel();
+
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -117,6 +221,9 @@ class _ChatScreenState extends State<ChatScreen> {
         if (position != null) {
           _lat = position.latitude;
           _lng = position.longitude;
+
+          // START THE STREAM NOW THAT WE HAVE PERMISSION!
+          _startLocationStream();
 
           // resend original message WITH location
           reply = await BackendService.sendMessage(
@@ -251,6 +358,32 @@ Future<bool> _showLocationDialog() async {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.black),
+            onPressed: () async {
+              await FacebookAuth.instance.logOut();
+
+              // show message
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Logged out"),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+
+              Future.delayed(const Duration(milliseconds: 500), () {
+
+
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (route) => false,
+                );
+                });
+            },
+          )
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Divider(color: _textLight.withOpacity(0.15), height: 1),

@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 class BackendService {
   // 🔴 CHANGE THIS TO YOUR NGROK URL
   static const String baseUrl =
-      'https://cc46-2402-3a80-4228-8372-753e-6107-b97b-6b7a.ngrok-free.app';
+      'https://7674-2402-3a80-4442-3749-6147-5a9f-5ff2-da5e.ngrok-free.app';
 
   //static final int userId = 555;
   static final String userId = _generateUserId();
@@ -59,6 +59,36 @@ class BackendService {
       return reply;
     } else {
       throw Exception('Server error: ${response.statusCode}');
+    }
+  }
+
+  static Future<void> updateLocation({
+    required String userId,
+    required double lat,
+    required double lng,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/update_location'),
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        body: jsonEncode({
+          'user_id': userId,
+          'lat': lat,
+          'lng': lng,
+          'address_type': 'current_location',
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        print("✅ Backend Location Sync: ${response.body}");
+      } else {
+        print("❌ Backend Sync Failed: ${response.statusCode}");
+      }
+    } catch (e) {
+      print("⚠️ Network error during location sync: $e");
     }
   }
 }
