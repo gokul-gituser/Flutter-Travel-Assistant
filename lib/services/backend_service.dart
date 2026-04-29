@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 class BackendService {
   // 🔴 CHANGE THIS TO YOUR NGROK URL
   static const String baseUrl =
-      'https://7674-2402-3a80-4442-3749-6147-5a9f-5ff2-da5e.ngrok-free.app';
+      'https://c881-2402-3a80-4443-b857-192d-6d83-9f3b-b4e6.ngrok-free.app';
 
   //static final int userId = 555;
   static final String userId = _generateUserId();
@@ -17,8 +17,44 @@ class BackendService {
     return 'user_${timestamp}_$randomSuffix';
   }
 
+  /// Sync Facebook places + friends to backend after login
+  static Future<void> syncFacebookData({
+    required String fbUserId,
+    required List<Map<String, dynamic>> posts,
+    required List<Map<String, dynamic>> friends,
+    Map<String, dynamic>? locationData, 
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/sync_fb_data'),
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        body: jsonEncode({
+          'user_id':    userId,    // your app's internal user_id
+          'fb_user_id': fbUserId, // facebook's user id
+          'posts':     posts,
+          'friends':    friends,
+          'location_data': locationData, 
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        print('✅ FB sync complete: ${response.body}');
+      } else {
+        print('❌ FB sync failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('⚠️ FB sync network error: $e');
+    }
+  }
+
   static Future<String> sendMessage(String message,
-      {double? lat, double? lng}) async {
+      {double? lat,
+       double? lng,
+       String? fbUserId,
+      }) async {
         // ---------------- DEBUG: USER MESSAGE ----------------
       print("\n================ USER MESSAGE =================");
       print("User ID: $userId");
@@ -37,6 +73,7 @@ class BackendService {
         'message': message,
         'lat': lat,
         'lng': lng,
+        'fb_user_id': fbUserId, //for backend to find friend places
       }),
     ).timeout(const Duration(seconds: 60));
 
@@ -48,6 +85,7 @@ class BackendService {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
+      
       
       final reply = data['reply'] as String;
 

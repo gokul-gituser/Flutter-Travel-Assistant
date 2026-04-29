@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'services/backend_service.dart';
 import 'services/location_service.dart';
+import 'services/facebook_service.dart';
 import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
@@ -38,16 +39,50 @@ class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
 
   Future<void> _login(BuildContext context) async {
-    final result = await FacebookAuth.instance.login();
+    final result = await FacebookAuth.instance.login(
+      permissions: [
+        'public_profile',
+        'email',
+        'user_friends',   // friends who also use your app
+        'user_posts',     // their timeline posts (place-tagged ones)
+        'user_location',  // <-- Add this
+        'user_hometown',
+      ],
+    );
 
     if (result.status == LoginStatus.success) {
+      // Sync FB data to backend before entering chat
+      await _syncFacebookData();
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const ChatScreen()),
       );
     } else {
-      print(result.status);
-      print(result.message);
+      print('FB Login failed: ${result.status} — ${result.message}');
+    }
+  }
+
+  Future<void> _syncFacebookData() async {
+    try {
+      await FacebookService.debugPrintUserPosts();
+
+      final fbUserId = await FacebookService.getFacebookUserId();
+      final posts   = await FacebookService.getUserPosts();
+      final friends  = await FacebookService.getAppFriends();
+      final locationData = await FacebookService.getAllLocationData();
+
+
+      print('📘 FB sync: ${posts.length} posts, ${friends.length} friends');
+      await BackendService.syncFacebookData(
+        fbUserId: fbUserId ?? '',
+        posts:   posts,
+        friends:  friends,
+        locationData: locationData,
+      );
+    } catch (e) {
+      // Non-fatal — user can still use the app
+      print('⚠️ FB sync failed (non-fatal): $e');
     }
   }
 
@@ -83,6 +118,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   double? _lat;
   double? _lng;
+  String? _fbUserId;
 
   // Colours
   static const Color _bg = Color(0xFFFAF6F1);
@@ -140,6 +176,7 @@ void _startLocationStream() async {
   @override
   void initState() {
     super.initState();
+    _loadFbUserId();
     _messages.add(ChatMessage(
       text: "Hello! I'm your travel assistant ✈️\nAsk me about places to visit, food, itineraries, safety tips — anything travel related.",
       isUser: false,
@@ -163,6 +200,10 @@ void _startLocationStream() async {
       print("📍 LIVE LOCATION: $_lat, $_lng");
     });
     */
+  }
+
+  Future<void> _loadFbUserId() async {
+  _fbUserId = await FacebookService.getFacebookUserId();
   }
   
 
@@ -193,6 +234,7 @@ void _startLocationStream() async {
       text,
       lat: _lat,
       lng: _lng,
+      fbUserId: _fbUserId,
     );
 
     // If LLM asks for location
@@ -360,6 +402,15 @@ Future<bool> _showLocationDialog() async {
         ),
         actions: [
           IconButton(
+              icon: const Icon(Icons.people, color: Colors.black),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const FriendsScreen()),
+                );
+              },
+            ),
+            IconButton(
             icon: const Icon(Icons.logout, color: Colors.black),
             onPressed: () async {
               await FacebookAuth.instance.logOut();
@@ -631,6 +682,64 @@ class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
           color: Color(0xFFB85C38),
         ),
       ),
+    );
+  }
+}
+
+
+class FriendsScreen extends StatefulWidget {
+  const FriendsScreen({super.key});
+
+  @override
+  State<FriendsScreen> createState() => _FriendsScreenState();
+}
+
+class _FriendsScreenState extends State<FriendsScreen> {
+  List<Map<String, dynamic>> _friends = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFriends();
+  }
+
+  Future<void> _loadFriends() async {
+    try {
+      final friends = await FacebookService.getAppFriends();
+
+      setState(() {
+        _friends = friends;
+        _loading = false;
+      });
+    } catch (e) {
+      print("Error loading friends: $e");
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Friends")),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _friends.isEmpty
+              ? const Center(child: Text("No friends using the app"))
+              : ListView.builder(
+                  itemCount: _friends.length,
+                  itemBuilder: (context, index) {
+                    final friend = _friends[index];
+
+                    return ListTile(
+                      leading: CircleAvatar(
+                        child: Text(friend['name'][0]),
+                      ),
+                      title: Text(friend['name'] ?? 'Unknown'),
+                      subtitle: Text("ID: ${friend['id']}"),
+                    );
+                  },
+                ),
     );
   }
 }
