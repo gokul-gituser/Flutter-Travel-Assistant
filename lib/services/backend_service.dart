@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 class BackendService {
   // 🔴 CHANGE THIS TO YOUR NGROK URL
   static const String baseUrl =
-      'https://c881-2402-3a80-4443-b857-192d-6d83-9f3b-b4e6.ngrok-free.app';
+      'https://1af6-2402-3a80-1e19-86f3-14f8-7589-ef71-3a79.ngrok-free.app';
 
   //static final int userId = 555;
   static final String userId = _generateUserId();

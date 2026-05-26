@@ -44,62 +44,61 @@ class FacebookService {
   //   }
   // }
     static Future<List<Map<String, dynamic>>> getUserPosts() async {
-    final token = await FacebookAuth.instance.accessToken;
-    if (token == null) return [];
+      final token = await FacebookAuth.instance.accessToken;
+      if (token == null) return [];
 
-    try {
-      final url = Uri.parse(
-        '$_graphBase/me/feed'
-        '?fields=message,story,place{name,location},attachments{description,title},created_time'
-        '&limit=100'
-        '&access_token=${token.tokenString}',
-      );
+      try {
+        final url = Uri.parse(
+          '$_graphBase/me/feed'
+          '?fields=message,story,place{name,location},created_time'  // fixed ?? → ? and added place
+          '&limit=100'
+          '&access_token=${token.tokenString}',
+        );
 
-      final response = await http.get(url);
-      if (response.statusCode != 200) return [];
+        final response = await http.get(url);
+        if (response.statusCode != 200) return [];
 
-      final data = jsonDecode(response.body);
-      final posts = data['data'] as List? ?? [];
+        final data = jsonDecode(response.body);
+        final posts = data['data'] as List? ?? [];
 
-      return posts.map<Map<String, dynamic>>((post) {
-        String text = '';
+        return posts.map<Map<String, dynamic>>((post) {
+          String text = post['message']?.toString().trim() ?? 
+                        post['story']?.toString().trim() ?? '';
 
-        if (post['message'] != null && post['message'].toString().trim().isNotEmpty) {
-          text = post['message'];
-        } 
-        else if (post['story'] != null && post['story'].toString().trim().isNotEmpty) {
-          text = post['story'];
-        } 
-        else if (post['attachments'] != null &&
-                post['attachments']['data'] != null &&
-                post['attachments']['data'].isNotEmpty) {
+          // Extract tagged place if present
+          final place = post['place'];
+          String? placeName;
+          String? placeCity;
+          String? placeCountry;
+          double? placeLat;
+          double? placeLng;
 
-          final attachment = post['attachments']['data'][0];
-
-          if (attachment['description'] != null &&
-              attachment['description'].toString().trim().isNotEmpty) {
-            text = attachment['description'];
-          } 
-          else if (attachment['title'] != null &&
-                  attachment['title'].toString().trim().isNotEmpty) {
-            text = attachment['title'];
+          if (place != null) {
+            placeName = place['name'];
+            placeCity = place['location']?['city'];
+            placeCountry = place['location']?['country'];
+            placeLat = place['location']?['latitude']?.toDouble();
+            placeLng = place['location']?['longitude']?.toDouble();
           }
-        }
 
-        return {
-          'message': text,
-          'created_time': post['created_time'] ?? '',
-        };
-    })
-    // 🔥 IMPORTANT: filter useless posts BEFORE sending
-    .where((p) => p['message'].toString().trim().isNotEmpty)
-    .toList();
+          return {
+            'message': text,
+            'created_time': post['created_time'] ?? '',
+            'place_name': placeName,
+            'place_city': placeCity,
+            'place_country': placeCountry,
+            'place_lat': placeLat,
+            'place_lng': placeLng,
+          };
+        })
+        .where((p) => p['message'].toString().trim().isNotEmpty || p['place_name'] != null)
+        .toList();
 
-    } catch (e) {
-      print('❌ getUserPosts error: $e');
-      return [];
-    }
-  }
+      } catch (e) {
+        print('❌ getUserPosts error: $e');
+        return [];
+      }
+}
 
   /// Friends who also use your app (Facebook only returns app-users)
   static Future<List<Map<String, dynamic>>> getAppFriends() async {
