@@ -5,9 +5,11 @@ import 'package:http/http.dart' as http;
 class BackendService {
   // 🔴 CHANGE THIS TO YOUR NGROK URL
   static const String baseUrl =
-      'https://1af6-2402-3a80-1e19-86f3-14f8-7589-ef71-3a79.ngrok-free.app';
+      'https://55b6-2402-3a80-1e1b-f9ef-9daf-1adf-64d9-5a43.ngrok-free.app';
 
   //static final int userId = 555;
+
+  /*
   static final String userId = _generateUserId();
 
   static String _generateUserId() {
@@ -16,7 +18,16 @@ class BackendService {
     final randomSuffix = random.nextInt(99999).toString().padLeft(5, '0');
     return 'user_${timestamp}_$randomSuffix';
   }
+*/
+  static String _userId = '';
 
+  static String get userId {
+      return _userId.isNotEmpty ? _userId : 'user_anonymous';
+  }
+
+  static void setUserId(String fbUserId) {
+      _userId = 'fb_$fbUserId';
+  }
   /// Sync Facebook places + friends to backend after login
   static Future<void> syncFacebookData({
     required String fbUserId,

@@ -29,7 +29,7 @@ class MyApp extends StatelessWidget {
 }
 
 class ChatMessage {
-  final String text;
+  String text;  //removed 'final' for streaming
   final bool isUser;
 
   ChatMessage({required this.text, required this.isUser});
@@ -65,9 +65,17 @@ class LoginScreen extends StatelessWidget {
 
   Future<void> _syncFacebookData() async {
     try {
+      //one user per fb account login
+      final fbUserId = await FacebookService.getFacebookUserId();
+        
+        // ← Set user ID first so all subsequent calls use it
+        if (fbUserId != null) {
+            BackendService.setUserId(fbUserId);
+        }
+
       await FacebookService.debugPrintUserPosts();
 
-      final fbUserId = await FacebookService.getFacebookUserId();
+     // final fbUserId = await FacebookService.getFacebookUserId();
       final posts   = await FacebookService.getUserPosts();
       final friends  = await FacebookService.getAppFriends();
       final locationData = await FacebookService.getAllLocationData();
