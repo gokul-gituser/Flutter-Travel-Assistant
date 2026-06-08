@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 class BackendService {
   // 🔴 CHANGE THIS TO YOUR NGROK URL
   static const String baseUrl =
-      'https://55b6-2402-3a80-1e1b-f9ef-9daf-1adf-64d9-5a43.ngrok-free.app';
+      'https://f0ff-2402-3a80-1e19-39e2-941e-4d11-3df8-c236.ngrok-free.app';
 
   //static final int userId = 555;
 
@@ -58,6 +58,51 @@ class BackendService {
       }
     } catch (e) {
       print('⚠️ FB sync network error: $e');
+    }
+  }
+    //new
+  static Stream<String> streamMessage(
+    String message, {
+    double? lat,
+    double? lng,
+    String? fbUserId,
+  }) async* {
+    final uri = Uri.parse('$baseUrl/chat/stream');
+    final client = http.Client();
+
+    try {
+      final request = http.Request('POST', uri);
+      request.headers['Content-Type'] = 'application/json';
+      request.headers['ngrok-skip-browser-warning'] = 'true';
+      request.body = jsonEncode({
+        'user_id': userId,
+        'message': message,
+        'lat': lat,
+        'lng': lng,
+        'fb_user_id': fbUserId,
+      });
+
+      final streamedResponse = await client.send(request);
+
+      await for (final chunk in streamedResponse.stream.transform(utf8.decoder)) {
+        for (final line in chunk.split('\n')) {
+          final trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            final jsonStr = trimmed.substring(6);
+            try {
+              final data = jsonDecode(jsonStr);
+              if (data['token'] != null) {
+                yield data['token'] as String;
+              } else if (data['done'] == true) {
+                // final injected reply — yield a special marker so _send can replace
+                yield '\u0000DONE\u0000${data['full_reply']}';
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    } finally {
+      client.close();
     }
   }
 

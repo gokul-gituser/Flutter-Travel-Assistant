@@ -223,7 +223,7 @@ void _startLocationStream() async {
     _scrollController.dispose();
     super.dispose();
   }
-  
+  /*
   Future<void> _send() async {
   final text = _controller.text.trim();
   if (text.isEmpty || _isLoading) return;
@@ -314,7 +314,90 @@ void _startLocationStream() async {
 
   _scrollToBottom();
 }
+*/
+Future<void> _send() async {
+  final text = _controller.text.trim();
+  if (text.isEmpty || _isLoading) return;
 
+  _controller.clear();
+  HapticFeedback.lightImpact();
+
+  setState(() {
+    _messages.add(ChatMessage(text: text, isUser: true));
+    _isLoading = true;
+  });
+  _scrollToBottom();
+
+  // Add an empty bot bubble that we'll fill token by token
+  final botMessage = ChatMessage(text: '', isUser: false);
+  setState(() {
+    _messages.add(botMessage);
+  });
+
+  try {
+    await for (final token in BackendService.streamMessage(
+      text,
+      lat: _lat,
+      lng: _lng,
+      fbUserId: _fbUserId,
+    )) {
+      if (token.startsWith('\u0000DONE\u0000')) {
+        // Replace with final injected version (places tokens resolved)
+        final finalReply = token.substring(6);
+        setState(() {
+          botMessage.text = finalReply;
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          botMessage.text += token;
+        });
+        _scrollToBottom();
+      }
+    }
+
+    // Handle location dialog same as before
+    if (_needsLocation(botMessage.text) && _lat == null) {
+      final granted = await _showLocationDialog();
+      setState(() {
+        _messages.add(ChatMessage(
+          text: granted ? "User allowed location access" : "User denied location permission",
+          isUser: true,
+        ));
+      });
+
+      if (granted) {
+        final position = await LocationService.getLocation();
+        if (position != null) {
+          _lat = position.latitude;
+          _lng = position.longitude;
+          _startLocationStream();
+          // resend with location
+          final resendMsg = ChatMessage(text: '', isUser: false);
+          setState(() => _messages.add(resendMsg));
+          await for (final token in BackendService.streamMessage(
+            text, lat: _lat, lng: _lng,
+          )) {
+            if (token.startsWith('\u0000DONE\u0000')) {
+              setState(() => resendMsg.text = token.substring(6));
+            } else {
+              setState(() => resendMsg.text += token);
+              _scrollToBottom();
+            }
+          }
+        }
+      }
+    }
+
+  } catch (e) {
+    setState(() {
+      botMessage.text = "Sorry, something went wrong. Please try again.";
+    });
+  } finally {
+    setState(() => _isLoading = false);
+    _scrollToBottom();
+  }
+}
 bool _needsLocation(String reply) {
   final lower = reply.toLowerCase();
   return lower.contains('location') ||
